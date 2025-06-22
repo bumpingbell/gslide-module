@@ -5,46 +5,112 @@
 function processTabs(slides) {
   const CONFIG = {
     totalWidth: 720,
-    height: 14,
+    height: 14, // Initial height, will be dynamically adjusted
     y: 0,
     fontSize: 8,
-    padding: 0,
-    spacing: 0,
+    padding: 10, // Increased padding for better appearance and to accommodate longer text
+    spacing: 2, // Spacing between tabs
     mainColor: main_color,
     mainFont: main_font_family,
     bgColor: '#FFFFFF',
     inactiveTextColor: '#888888',
-    minWidth: 50   // <-- e.g. 50pt minimum
+    minWidth: 50,
+    maxTabHeight: 40, // New: Maximum height a tab can expand to for multi-line text
+    lineHeightFactor: 1.2, // New: Factor to determine height per line
+    maxLines: 2 // New: Maximum number of lines a tab heading can have
   };
 
   const sections = getSectionHeaders(slides);
   if (sections.length === 0) return;
 
-  // 先 client-side 刪除
+  // First, delete old tabs client-side
   slides.forEach((slide, idx) => {
-    if (idx === 0) return;  // 跳過封面
+    if (idx === 0) return; // Skip cover slide
     deleteOldTabsClient(slide);
   });
 
-  // 再 batchUpdate 建立新的
   const requests = [];
   let currentSectionIdx = -1;
   const totalPages = slides.length;
+
+  // Calculate estimated character width based on font size. This is an approximation.
+  // We'll iterate to find max width needed and then determine if multi-line is necessary.
+  const estCharW = CONFIG.fontSize * 0.6; // Adjusted for better fit
+
+  // Pre-calculate desired widths and heights for each tab
+  const tabData = sections.map(sec => {
+    const text = sec.title;
+    // Calculate ideal width based on text length and padding
+    let idealWidth = text.length * estCharW + CONFIG.padding * 2;
+    idealWidth = Math.max(idealWidth, CONFIG.minWidth);
+
+    // Determine if text needs wrapping and calculate height
+    let lines = 1;
+    let actualWidth = idealWidth; // Start with ideal width
+    if (idealWidth > CONFIG.totalWidth / sections.length && sections.length > 1) {
+      // If a single tab is too wide relative to available space per tab, consider wrapping
+      // This is a heuristic. More precise calculation would involve text breaking algorithms.
+      const maxAllowedWidthPerTab = (CONFIG.totalWidth - (sections.length - 1) * CONFIG.spacing) / sections.length;
+      if (idealWidth > maxAllowedWidthPerTab) {
+        // Estimate how many lines if we force width to maxAllowedWidthPerTab
+        lines = Math.min(Math.ceil((text.length * estCharW) / (maxAllowedWidthPerTab - CONFIG.padding * 2)), CONFIG.maxLines);
+        actualWidth = Math.max(maxAllowedWidthPerTab, CONFIG.minWidth); // Use max allowed width or minWidth
+      }
+    }
+    
+    // Ensure width is not excessively small if text is short and lines increased
+    if (lines > 1 && actualWidth < CONFIG.minWidth * 1.5) { // If multiline, ensure a slightly larger minimum width
+      actualWidth = CONFIG.minWidth * 1.5;
+    }
+
+
+    let calculatedHeight = CONFIG.height;
+    if (lines > 1) {
+      calculatedHeight = Math.min(CONFIG.height * CONFIG.lineHeightFactor * lines, CONFIG.maxTabHeight);
+    }
+    
+    // Ensure minimum height even for single line to maintain consistency
+    calculatedHeight = Math.max(calculatedHeight, CONFIG.height);
+
+
+    return {
+      title: text,
+      index: sec.index,
+      slideId: sec.slideId,
+      width: actualWidth,
+      height: calculatedHeight,
+      lines: lines // Store number of lines calculated
+    };
+  });
+
+  // Now, adjust all tab heights to the maximum calculated height among them to keep them uniform
+  const uniformTabHeight = tabData.reduce((maxH, tab) => Math.max(maxH, tab.height), CONFIG.height);
+  // Also adjust total width based on the newly calculated widths
+  const totalTabsWidth = tabData.reduce((sum, tab) => sum + tab.width, 0) + CONFIG.spacing * (tabData.length - 1);
+
+  // Calculate the starting X position to center the tabs
+  const xStart = Math.max((CONFIG.totalWidth - totalTabsWidth) / 2, 0);
 
   slides.forEach((slide, idx) => {
     if (idx === 0) return;
     const slideId = slide.getObjectId();
 
-    // 計算這張 slide 應該是第幾個 section
+    // Determine current section index
     if (currentSectionIdx + 1 < sections.length && idx >= sections[currentSectionIdx + 1].index) {
       currentSectionIdx++;
     }
     appendPageNumberToSlide({ slideId, requests, currentPage: idx + 1, totalPages, config: CONFIG });
     if (slide.getLayout().getLayoutName() === 'SECTION_HEADER') return;
+
     const currentSection = currentSectionIdx >= 0 ? currentSectionIdx : -1;
-    // 加入標籤列
-    appendTabListToSlide({ slideId, requests, sections, currentSection, config: CONFIG });
-    // 加入分頁文字
+    // Add tab list
+    appendTabListToSlide({
+      slideId,
+      requests,
+      sections: tabData, // Pass the processed tabData
+      currentSection,
+      config: { ...CONFIG, height: uniformTabHeight, xStart: xStart } // Pass updated height and xStart
+    });
   });
 
   if (requests.length) {
@@ -77,28 +143,45 @@ function getFirstTextboxText(slide) {
 function deleteOldTabsClient(slide) {
   slide.getShapes().forEach(shape => {
     const id = shape.getObjectId();
-    if (id.startsWith('tab_') || id.startsWith('tab_bg_') || id.startsWith('tab_line_') || id.startsWith('page_num_')) {
+    if (id.startsWith('tab_') || id.startsWith('tab_bg_') || id.startsWith('page_num_')) { // Changed to match updated IDs
       shape.remove();
+    }
+  });
+  // Also remove lines created with 'tab_line_' prefix
+  slide.getLines().forEach(line => {
+    const id = line.getObjectId();
+    if (id.startsWith('tab_line_')) {
+      line.remove();
     }
   });
 }
 
 /** 把一整列標籤的 batchUpdate requests 推到 requests 陣列 */
 function appendTabListToSlide({ slideId, requests, sections, currentSection, config }) {
-  const estCharW = config.fontSize * 0.75;
-  const widths = sections.map(sec => Math.max(sec.title.length * estCharW + config.padding, config.minWidth));
-  const totalTabsWidth = widths.reduce((a, b) => a + b, 0) + config.spacing * (widths.length - 1);
-  const xStart = Math.max((config.totalWidth - totalTabsWidth) / 2, 0);
-  let xPos = xStart;
+  // Use xStart directly from config, as it's already calculated
+  let xPos = config.xStart;
 
   addBackgroundTabBar(slideId, requests, config);
 
   sections.forEach((sec, idx) => {
     const isActive = idx === currentSection;
-    appendTab({ slideId, requests, title: sec.title, targetSlideId: sec.slideId, xPos, width: widths[idx], config, textColor: isActive ? '#FFFFFF' : config.inactiveTextColor, fillColor: isActive ? config.mainColor : config.bgColor });
-    xPos += widths[idx] + config.spacing;
+    // Use the width and height pre-calculated in tabData
+    appendTab({
+      slideId,
+      requests,
+      title: sec.title,
+      targetSlideId: sec.slideId,
+      xPos,
+      width: sec.width,
+      height: config.height, // Use uniform height
+      config,
+      textColor: isActive ? '#FFFFFF' : config.inactiveTextColor,
+      fillColor: isActive ? config.mainColor : config.bgColor
+    });
+    xPos += sec.width + config.spacing;
   });
 
+  // Add the bottom line. It should be below all tabs.
   addBottomLine(slideId, requests, config);
 }
 
@@ -145,10 +228,20 @@ function appendPageNumberToSlide({ slideId, requests, currentPage, totalPages, c
   );
 }
 
-function appendTab({ slideId, requests, title, targetSlideId, xPos, width, config, textColor, fillColor }) {
+function appendTab({ slideId, requests, title, targetSlideId, xPos, width, height, config, textColor, fillColor }) { // Added height parameter
   const tabId = `tab_${slideId}_${newGuid()}`;
   requests.push(
-    { createShape: { objectId: tabId, shapeType: 'TEXT_BOX', elementProperties: { pageObjectId: slideId, size: { height: { magnitude: config.height, unit: 'PT' }, width: { magnitude: width, unit: 'PT' } }, transform: { translateX: xPos, translateY: config.y, scaleX: 1, scaleY: 1, unit: 'PT' } } } },
+    {
+      createShape: {
+        objectId: tabId,
+        shapeType: 'TEXT_BOX',
+        elementProperties: {
+          pageObjectId: slideId,
+          size: { height: { magnitude: height, unit: 'PT' }, width: { magnitude: width, unit: 'PT' } }, // Use calculated height
+          transform: { translateX: xPos, translateY: config.y, scaleX: 1, scaleY: 1, unit: 'PT' }
+        }
+      }
+    },
     { insertText: { objectId: tabId, text: title } },
     { updateShapeProperties: { objectId: tabId, shapeProperties: { shapeBackgroundFill: solidFill(fillColor), contentAlignment: 'MIDDLE' }, fields: 'shapeBackgroundFill.solidFill.color,contentAlignment' } },
     { updateTextStyle: { objectId: tabId, textRange: { type: 'ALL' }, style: { bold: true, fontFamily: config.mainFont, fontSize: { magnitude: config.fontSize, unit: 'PT' }, foregroundColor: { opaqueColor: { rgbColor: hexToRgb(textColor) } }, underline: false, link: { pageObjectId: targetSlideId } }, fields: 'bold,fontFamily,fontSize,foregroundColor,underline,link' } },
@@ -159,7 +252,17 @@ function appendTab({ slideId, requests, title, targetSlideId, xPos, width, confi
 function addBackgroundTabBar(slideId, requests, config) {
   const bgId = `tab_bg_${slideId}_${newGuid()}`;
   requests.push(
-    { createShape: { objectId: bgId, shapeType: 'RECTANGLE', elementProperties: { pageObjectId: slideId, size: { height: { magnitude: config.height, unit: 'PT' }, width: { magnitude: config.totalWidth, unit: 'PT' } }, transform: { translateX: 0, translateY: config.y, scaleX: 1, scaleY: 1, unit: 'PT' } } } },
+    {
+      createShape: {
+        objectId: bgId,
+        shapeType: 'RECTANGLE',
+        elementProperties: {
+          pageObjectId: slideId,
+          size: { height: { magnitude: config.height, unit: 'PT' }, width: { magnitude: config.totalWidth, unit: 'PT' } }, // Use uniform height
+          transform: { translateX: 0, translateY: config.y, scaleX: 1, scaleY: 1, unit: 'PT' }
+        }
+      }
+    },
     { updateShapeProperties: { objectId: bgId, shapeProperties: { shapeBackgroundFill: solidFill(config.bgColor), outline: { weight: { magnitude: 0.1, unit: 'PT' }, outlineFill: { solidFill: { color: { rgbColor: hexToRgb(config.bgColor) } } } } }, fields: 'shapeBackgroundFill.solidFill.color,outline.weight,outline.outlineFill.solidFill.color' } }
   );
 }
@@ -167,7 +270,17 @@ function addBackgroundTabBar(slideId, requests, config) {
 function addBottomLine(slideId, requests, config) {
   const lineId = `tab_line_${slideId}_${newGuid()}`;
   requests.push(
-    { createLine: { objectId: lineId, lineCategory: 'STRAIGHT', elementProperties: { pageObjectId: slideId, size: { height: { magnitude: 0, unit: 'PT' }, width: { magnitude: config.totalWidth, unit: 'PT' } }, transform: { translateX: 0, translateY: config.y + config.height, scaleX: 1, scaleY: 1, unit: 'PT' } } } },
+    {
+      createLine: {
+        objectId: lineId,
+        lineCategory: 'STRAIGHT',
+        elementProperties: {
+          pageObjectId: slideId,
+          size: { height: { magnitude: 0, unit: 'PT' }, width: { magnitude: config.totalWidth, unit: 'PT' } },
+          transform: { translateX: 0, translateY: config.y + config.height, scaleX: 1, scaleY: 1, unit: 'PT' } // Adjust Y based on new uniform height
+        }
+      }
+    },
     { updateLineProperties: { objectId: lineId, lineProperties: { lineFill: solidFill(config.mainColor) }, fields: 'lineFill.solidFill.color' } }
   );
 }

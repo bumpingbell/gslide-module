@@ -8,6 +8,11 @@ function processSectionBoxes(slides, requests) {
   const sections = getSectionHeaders(slides);
   if (!sections.length) return;
 
+  // New constants for main title estimation
+  const MAIN_TITLE_FONT_SIZE = 30; // Assuming a typical font size for the main section title
+  const MAIN_TITLE_MAX_WIDTH = 600; // Assuming a typical max width for the main section title textbox
+  const DOUBLE_LINE_TITLE_BOTTOM_Y_OFFSET = 30; // Additional Y offset if the main title is two lines
+
   sections.forEach((sec, idx) => {
     const slide    = slides[sec.index];
     const slideId  = sec.slideId;
@@ -19,6 +24,17 @@ function processSectionBoxes(slides, requests) {
 
     const beforeTitles = sections.slice(0, idx).map(s => s.title);
     const afterTitles  = sections.slice(idx + 1).map(s => s.title);
+
+    // Determine if the *current* section title is likely to be two lines
+    const currentSectionTitle = sec.title;
+    // Heuristic for character width. Adjust 0.6 if your font's average character width is different.
+    const estimatedCharsPerLine = MAIN_TITLE_MAX_WIDTH / (MAIN_TITLE_FONT_SIZE * 0.6);
+    const isMainTitleTwoLines = currentSectionTitle.length > estimatedCharsPerLine;
+
+    let adjustedYAfter = BOX_CONFIG.yAfter;
+    if (isMainTitleTwoLines) {
+      adjustedYAfter += DOUBLE_LINE_TITLE_BOTTOM_Y_OFFSET;
+    }
 
     // Before titles
     if (beforeTitles.length) {
@@ -42,7 +58,7 @@ function processSectionBoxes(slides, requests) {
     if (afterTitles.length) {
       const afterId = `after_${slideId}_${newGuid()}`;
       requests.push(
-        createShapeRequest(afterId, slideId, BOX_CONFIG.x, BOX_CONFIG.yAfter, BOX_CONFIG.width),
+        createShapeRequest(afterId, slideId, BOX_CONFIG.x, adjustedYAfter, BOX_CONFIG.width), // Use adjustedYAfter
         {
           updateShapeProperties: {
             objectId: afterId,
