@@ -1,10 +1,11 @@
 // Configuration settings for the Google Slides module
 var main_color = "#3D6869";
 var main_font_family = "Source Sans Pro";
-var water_mark_text = "ⓒ Hsieh-Ting Lin";
+var water_mark_text = "ⓒ Shih-Tsung Fu";
 var label_font_size = 14;
 var progressBarHeight = 5;
-const sourcePresentationId = "1qAZzq-uo5blLH1nqp9rbrGDlzz_Aj8eIp0XjDdmI220";
+//const sourcePresentationId = "1qAZzq-uo5blLH1nqp9rbrGDlzz_Aj8eIp0XjDdmI220";
+const sourcePresentationId = "195VOBWvtKGUlFHYHEAwnNr3wGNQdgn-wCm7yHcOj6Vo";
 
 // Properties service keys for storing configuration
 const CONFIG_KEYS = {
